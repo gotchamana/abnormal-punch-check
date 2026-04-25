@@ -2,8 +2,6 @@
 
 (() => {
   class LeaveAppRecord {
-    #expiration;
-
     #applicationIdAddress;
 
     #applicationId;
@@ -19,7 +17,6 @@
     #leaveEndTime;
 
     constructor({
-      expiration,
       applicationIdAddress,
       applicationId,
       status,
@@ -28,7 +25,6 @@
       leaveStartTime,
       leaveEndTime,
     }) {
-      this.#expiration = expiration;
       this.#applicationIdAddress = applicationIdAddress;
       this.#applicationId = applicationId;
       this.#status = status;
@@ -41,7 +37,6 @@
     static fromRow(row) {
       if (!row) return null;
 
-      const expiration = row.getCell(1).text.trim();
       const applicationIdAddress = row.getCell(2).address;
       const applicationId = row.getCell(2).text.trim();
       const status = row.getCell(5).text.trim();
@@ -60,7 +55,6 @@
         startTime &&
         endTime
         ? new LeaveAppRecord({
-            expiration,
             applicationIdAddress,
             applicationId,
             status,
@@ -95,10 +89,6 @@
         startTime,
         endTime,
       };
-    }
-
-    get expiration() {
-      return this.#expiration;
     }
 
     get applicationIdAddress() {
@@ -253,9 +243,7 @@
   function validateLeaveApplication(record) {
     if (!record) return { valid: false, reason: "無效的資料" };
 
-    const { expiration, status } = record;
-
-    if (expiration == "是") return { valid: false, reason: "跳過，已逾期" };
+    const { status } = record;
 
     if (status.includes("抽單"))
       return { valid: false, reason: "跳過，流程狀態為抽單" };
