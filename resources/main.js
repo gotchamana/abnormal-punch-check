@@ -37,13 +37,13 @@
     static fromRow(row) {
       if (!row) return null;
 
-      const applicationIdAddress = row.getCell(2).address;
-      const applicationId = row.getCell(2).text.trim();
-      const status = row.getCell(5).text.trim();
-      const employeeId = row.getCell(8).text.trim();
-      const employeeName = row.getCell(9).text.trim();
+      const applicationIdAddress = "foo";
+      const applicationId = row[1].v.trim();
+      const status = row[4].v.trim();
+      const employeeId = row[7].v.trim();
+      const employeeName = row[8].v.trim();
 
-      const leaveTime = row.getCell(13).text.trim();
+      const leaveTime = row[12].v.trim();
       const { startTime, endTime } =
         LeaveAppRecord.#parseLeaveTimeRange(leaveTime);
 
@@ -146,10 +146,9 @@
       .then((wb) => {
         process(wb);
 
-        createDownloadUrl(wb).then((url) => {
-          downloadButton.dataset.url = url;
-          downloadButton.disabled = !url;
-        });
+        const url = createDownloadUrl(wb);
+        downloadButton.dataset.url = url;
+        downloadButton.disabled = !url;
       })
       .catch((e) => {
         console.error(e);
@@ -172,22 +171,24 @@
     }
   }
 
-  async function loadWorkbook(excelInput) {
+  function loadWorkbook(excelInput) {
     if (excelInput.files.length == 0) throw new Error("No file is choosed");
 
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.read(excelInput.files[0].stream());
-
-    return workbook;
+    return excelInput.files[0]
+      .arrayBuffer()
+      .then((buffer) => XLSX.read(buffer, { dense: true }));
   }
 
   function createDownloadUrl(workbook) {
-    return workbook.xlsx.writeBuffer().then((buffer) =>
-      URL.createObjectURL(
-        new Blob([buffer], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }),
-      ),
+    const buffer = XLSX.writeXLSX(workbook, {
+      type: "array",
+      cellStyles: true,
+    });
+
+    return URL.createObjectURL(
+      new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
     );
   }
 
@@ -209,14 +210,14 @@
   }
 
   function getLeaveApplicationRecords(workbook) {
-    const leaveSheet = workbook.getWorksheet("請假單");
+    const leaveSheet = workbook.Sheets["請假單"];
 
     if (!leaveSheet) throw new Error("請假單 work sheet not found");
 
     const leaveData = new Map();
 
-    leaveSheet.eachRow((row, index) => {
-      if (index < 2) return;
+    leaveSheet["!data"].forEach((row, index) => {
+      if (index < 1) return;
 
       const record = LeaveAppRecord.fromRow(row);
 
@@ -225,8 +226,9 @@
       const { valid, reason } = validateLeaveApplication(record);
 
       if (!valid) {
-        const processedResult = row.getCell(19);
-        processedResult.value = reason;
+        XLSX.utils.sheet_add_aoa(leaveSheet, [[reason]], {
+          origin: { r: index, c: 18 },
+        });
 
         return;
       }
@@ -255,18 +257,18 @@
   }
 
   function processAbnormalPunchRecords(workbook, leaveData) {
-    const punchSheet = workbook.getWorksheet("打卡紀錄");
+    const punchSheet = workbook.Sheets["打卡紀錄"];
 
     if (!punchSheet) throw new Error("打卡紀錄 work sheet not found");
 
-    punchSheet.eachRow((row, index) => {
-      if (index < 7) return;
+    punchSheet["!data"].forEach((_, index) => {
+      if (index < 6) return;
 
-      const employeeId = row.getCell(1).text.trim();
-      const employeeName = row.getCell(2).text.trim();
-      const punchTime = row.getCell(9).text.trim();
+      const employeeId = getCellValue(punchSheet, index, 0).trim();
+      const employeeName = getCellValue(punchSheet, index, 1).trim();
+      const punchTime = getCellValue(punchSheet, index, 8).trim();
       const parsedPunchTime = parseDateTime(punchTime);
-      const processedResult = row.getCell(23);
+      let processedResult = "";
 
       console.debug(
         "employeeId: %s, employeeName: %s, punchTime: %s",
@@ -276,14 +278,20 @@
       );
 
       if (!parsedPunchTime) {
-        processedResult.value = "時間格式異常: " + punchTime;
+        processedResult = "時間格式異常: " + punchTime;
+        XLSX.utils.sheet_add_aoa(punchSheet, [[processedResult]], {
+          origin: { r: index, c: 22 },
+        });
         return;
       }
 
       const applications = leaveData.get(employeeId);
 
       if (!applications) {
-        processedResult.value = "查無請假資料";
+        processedResult = "查無請假資料";
+        XLSX.utils.sheet_add_aoa(punchSheet, [[processedResult]], {
+          origin: { r: index, c: 22 },
+        });
         return;
       }
 
@@ -307,14 +315,31 @@
           app.leaveEndTime.format(),
         );
 
-        processedResult.value = {
-          text: `已請假，申請單編號為${app.applicationId}`,
-          hyperlink: `#'請假單'.${app.applicationIdAddress}`,
-        };
+        processedResult = `已請假，申請單編號為${app.applicationId}`;
+        XLSX.utils.sheet_add_aoa(punchSheet, [[processedResult]], {
+          origin: { r: index, c: 22 },
+        });
       } else {
-        processedResult.value = "查無請假資料";
+        processedResult = "查無請假資料";
+        XLSX.utils.sheet_add_aoa(punchSheet, [[processedResult]], {
+          origin: { r: index, c: 22 },
+        });
       }
     });
+  }
+
+  function getCellValue(sheet, row, col) {
+    const merges = sheet["!merges"];
+    const rows = sheet["!data"];
+    const value = rows[row]?.[col]?.v;
+
+    if (!merges || merges.length == 0) return value;
+
+    const merge = merges.find(
+      ({ s, e }) => row >= s.r && row <= e.r && col >= s.c && col <= e.c,
+    );
+
+    return merge ? rows[merge.s.r]?.[merge.s.c]?.v : value;
   }
 
   function parseDateTime(dateTime) {
